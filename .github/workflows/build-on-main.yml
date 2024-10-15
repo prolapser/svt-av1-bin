@@ -1,0 +1,88 @@
+name: Build on main
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+      - cron: '0 0 * * 1'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+            cmake \
+            gcc \
+            g++ \
+            nasm \
+            yasm \
+            ninja-build \
+            pkg-config \
+            meson \
+            git \
+            autoconf \
+            libtool \
+            make
+
+    - name: build
+      run: |
+        git clone https://gitlab.com/AOMediaCodec/SVT-AV1.git
+        cd SVT-AV1
+        mkdir -p Build/linux/${{ matrix.target }}/Release
+        cd Build/linux/${{ matrix.target }}/Release
+        cmake ../../../.. -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_EXE_LINKER_FLAGS="-static"
+        make SvtAv1EncApp
+
+    - name: postprocessing
+      run: |
+        shorthash=$(git -C SVT-AV1 log -1 --format="%h")
+        revision=$(git -C SVT-AV1 rev-list --count HEAD)
+        cp SVT-AV1/Bin/Release/SvtAv1EncApp SvtAv1EncApp
+        cp SVT-AV1/LICENSE.md LICENSE.md
+        cp SVT-AV1/PATENTS.md PATENTS.md
+        tar -czvf "SVT-AV1_r${revision}-${shorthash}.tar.gz" SvtAv1EncApp LICENSE.md PATENTS.md
+
+    - name: Upload result
+      uses: actions/upload-artifact@v3
+      with:
+        name: SVT-AV1
+        path: |
+          SVT-AV1_*.tar.gz
+
+  create_release:
+    name: Create release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - uses: actions/download-artifact@v3
+      with:
+        name: SVT-AV1
+        path: artifacts
+    
+    - name: Get Date
+      id: get_date
+      run: |
+        echo "DATE_TIME=$(date +'%Y-%m-%d-%H-%M-%S')" >> $GITHUB_ENV
+    
+    - name: Create a Release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        TAG_NAME=build-${{ env.DATE_TIME }}
+        assets=()
+        for asset in artifacts/*.tar.gz; do
+          assets+=("$asset")
+        done
+        gh release create "$TAG_NAME" "${assets[@]}"
